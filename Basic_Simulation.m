@@ -2,27 +2,53 @@
 load("track_data")
 
 %Set initial position and pose of Car
-c_init_x = 0;
-c_init_y = 0;
+c_init_x = left_x(1);
+c_init_y = left_y(1);
 c_init_theta = 0;
 
 %Create World for simulation
-steptime = 0.001;
+steptime = 0.01;
 world = World(left_x,left_y,right_x,right_y,tk_x,tk_y,c_init_x,c_init_y,c_init_theta,steptime);
 
 %Plot Track to confirm mapping
-world.plotTrack(left_x,left_y,right_x,right_y,tk_x,tk_y);
+%world.plotTrack(left_x,left_y,right_x,right_y,tk_x,tk_y);
 
 %Create SLAM
 noise_type = 'uniform';          %Set 'uniform' or 'normal' noise dist 
-cone_n_val = 0.1;                %Set 'range' or 'stddev' for cone noise
-car_n_val = [0,0,0,0,0];         %Set 'range' or 'stddev' for car state noise
+cone_n_val = 0;                  %Set 'range' or 'stddev' for cone noise
+car_n_val = [0,0,0,0,0,0,0,0,0]; %Set 'range' or 'stddev' for car state noise
 radius = 10;                     %Set radius of SLAM perception
 slam = SLAM(noise_type,cone_n_val,car_n_val,radius,steptime);
 
 %Create Path Planner
+%PP = PathPlanner
 
+%Approximated Test Path (Left wall of track)
+X_Points = left_x;
+Y_Points = left_y;
+t = 1:numel(left_x);
 
-%Create Controller
+xy_left = [left_x;left_y];
+ls = spline(t,xy_left);
+path = ppval(ls,linspace(1,numel(left_x),1000));
+
+V = 2;
+
+figure(2)
+plot(path(1,:),path(2,:),'r')
+hold on
+plot(path(1,1),path(2,1),'b*')
+plot(path(1,end),path(2,end),'ro')
+plot(xy_left(1,:),xy_left(2,:),'kx')
+
+%Create Controller [Ld = 0.5, Kdd = 1]
+controller = Controller(0.5,1,steptime);
+while ~(controller.isComplete)
+    slam.update(world.Cones_L,world.Cones_R,world.Cones_Tk,world.Car);
+    %[X,Y] = pathplanner.update(slam.Car_N,slam.Cones_N);
+    [V,DeltaDot] = controller.update(V,path(1,:),path(2,:),slam.Car_N);
+    world.update(V,DeltaDot);
+end
+
 
 

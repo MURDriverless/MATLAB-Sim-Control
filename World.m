@@ -51,10 +51,10 @@ classdef World < handle
        end
        
        %Function to Update state of world given controller inputs
-       function state = update(obj,V,Gamma_F_Dot)
+       function update(obj,V,Delta_Dot)
            obj.Cur_Iter = obj.Cur_Iter+1;
            obj.Cur_Time = obj.Cur_Time + obj.Step_Time;
-           state = obj.Car.update(obj.Step_Time,V,Gamma_F_Dot);
+           obj.Car.update(obj.Step_Time,V,Delta_Dot);
        end
       
        %Plot L+R Cones and Tk Cones
