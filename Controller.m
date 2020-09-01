@@ -1,13 +1,13 @@
 classdef Controller < handle
     properties
-        Kdd                %Gain setting Lookahead distance from V
+        Kdd                %Gain that sets 'Lookahead distance' = Kdd*V
         T                  %Sampling Time
         GP = [0,0]         %Current Goal Point
-        pathIndex = 1      %Path Index - Where to start searching from
+        pathIndex = 1      %Path Index - Where to start searching from on Reference
         LdMod              %Current Lookahead Distance
         PIDCounter         %Counter to seperate PID frequency vs Controller frequency
         V_Ref              %Velocity Reference
-        D_Ref              %Delta Reference
+        D_Ref              %Delta Reference (Steering)
         V_E = 0            %Velocity Error
         V_E_Int = 0        %Velocity Error Integral
         D_E = 0            %Delta Error
@@ -36,47 +36,60 @@ classdef Controller < handle
        end
        
        function updateLd(obj,V)
+           %Set lookahead distance based on velocity 
            obj.LdMod = obj.minLd + obj.Kdd*V;
-            if obj.LdMod>obj.maxLd        %Maximum look ahead on unknown
+            if obj.LdMod>obj.maxLd        %Maximum look ahead (Not visible)
                obj.LdMod = obj.maxLd;
            end
        end
        
        function [a,DeltaDot] = update(obj,VRef,Xpath,Ypath,Car)
+           %Update states of car
            X = Car.X(end);
            Y = Car.Y(end);
            V = sign(Car.xDot(end))*sqrt(Car.XDot(end)^2+Car.YDot(end)^2);
            D = Car.Delta(end);
            
+           %Operate Controller Loop - PID Loops 10x for each Controller Loop
            if(obj.PIDCounter==1)
                obj.updateLd(V);
+               
+               %Calculate rear wheel position
                Theta = Car.Theta(end);
                L = Car.L;
                Lr = Car.Lr;  
                Xr = X-Lr*cos(Theta);
                Yr = Y-Lr*sin(Theta);
            
+               %Searching through reference path to update starting search
+               %parameter (obj.pathIndex)
                d = realmax;
                for i=obj.pathIndex:numel(Xpath)
                    dist = sqrt((Xr-Xpath(i))^2+(Yr-Ypath(i))^2);
+                   %Exceeded typical search range (Index will have been found)
                    if dist>obj.minLd
                        break;
                    end
+                   %Moving along path to find closest path point to car
                    if dist<d
                        d = dist;
                        obj.pathIndex = i;
                    end
                end
-           
+                
+               %Determine Goal Point, Steering Angle and Maximum Velocity
                obj.GP = obj.determineGP(Xpath,Ypath,Xr,Yr,obj.pathIndex);
                [obj.D_Ref,V_Max] = obj.determineDelta(obj.GP,Xr,Yr,Theta,L);
                obj.V_Ref = min(VRef(obj.pathIndex),V_Max);
            end
            
+           %PID Loop (10x Frequency to Controller)
            V_E_Prev = obj.V_E;
            D_E_Prev = obj.D_E;
            obj.V_E = obj.V_Ref-V;
            obj.D_E = obj.D_Ref-D;
+           
+           %Saturate integral error term (Prevents wind-up)
            if obj.aPrev<10 && obj.aPrev>-15
                 obj.V_E_Int = obj.V_E_Int+obj.V_E*obj.T;
            end
@@ -84,14 +97,16 @@ classdef Controller < handle
                 obj.D_E_Int = obj.D_E_Int+obj.D_E*obj.T;
            end
            
+           %Determine inputs acceleration and steering yaw
            a = obj.Kp_V*obj.V_E + obj.Ki_V*(obj.V_E_Int) + obj.Kd_V*(obj.V_E-V_E_Prev)/obj.T;
            DeltaDot = obj.Kp_D*obj.D_E + obj.Ki_D*(obj.D_E_Int) + obj.Kd_D*(obj.D_E-D_E_Prev)/obj.T;
            
+           %If approaching final goal stop steering
            if(obj.GP(1)==Xpath(end) && obj.GP(2)==Ypath(end))
                DeltaDot = 0;
            end
-               
-           
+            
+           %Ensure control inputs within acceptable range
            a = obj.saturateValue(a,-15,10);
            DeltaDot = obj.saturateValue(DeltaDot,-pi,pi);
            
@@ -130,12 +145,14 @@ classdef Controller < handle
            end
        end
        
+       %Function to determine steering angle and maximum velocity in turn
        function [Delta,VMax] = determineDelta(obj,GP,X,Y,Theta,L)
            Alpha = atan2((GP(2)-Y),(GP(1)-X))-Theta;
            Delta = atan2((2*L*sin(Alpha)),obj.LdMod);
-           VMax = 3*sqrt(obj.LdMod/(2*abs(sin(Alpha))));
+           VMax = obj.FGain*sqrt(obj.LdMod/(2*abs(sin(Alpha))));
        end
        
+       %Function to saturate a value given minimum and maximum
        function sat = saturateValue(~,val,min,max)
            if val>max
                sat=max;

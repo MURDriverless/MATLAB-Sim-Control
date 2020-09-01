@@ -4,11 +4,11 @@ classdef Cone < handle
       Y               %True Y Position of Cone
       W = 0.228;      %Default Width in m
       C               %Colour of Cone
-      XAvg            %Average X Position
-      YAvg            %Average Y Position
+      XAvg            %Average X Position (Measured multiple times)
+      YAvg            %Average Y Position (Measured multiple times)
       numSeen = 0;    %Amount of Times Scanned by SLAM
-      Mapped = false; %Mapped Geometrically by PathPlanner
-      Seen = false;   %Seen and Recorded at least once by SLAM
+      Mapped = false; %Mapped Geometrically by PathPlanner (Used to set GP)
+      Seen = false;   %Seen and Recorded at least once by SLAM - Speeds up SLAM emulation
       
    end
    methods

@@ -23,9 +23,13 @@ classdef PathPlanner < handle
         VMax                           %Maximum Velocity Value
         VConst                         %Constant Velocity Value
         FGain                          %Maximum Force Gain
+        WeightDist                     %Weighting on sorting by Distance
+        WeightAngleDiff                %Weighting on sorting by Angle between cones
+        WeightTrackWidth               %Weighting on sorting by Expected Track Width
+        
     end
     methods
-        function obj = PathPlanner(Cones,Car,isConstantVelocity,VMax,VConst,FGain)
+        function obj = PathPlanner(Cones,Car,isConstantVelocity,VMax,VConst,FGain,WeightDist,WeightAngleDiff,WeightTrackWidth)
             obj.LCs = Cone.empty;
             obj.RCs = Cone.empty;
             obj.TKCs = Cone.empty;
@@ -36,6 +40,9 @@ classdef PathPlanner < handle
             obj.VMax = VMax;
             obj.VConst = VConst;
             obj.FGain = FGain;
+            obj.WeightDist = WeightDist;
+            obj.WeightAngleDiff = WeightAngleDiff;
+            obj.WeightTrackWidth = WeightTrackWidth;
             
             numL = 0;
             numR = 0;
@@ -64,7 +71,7 @@ classdef PathPlanner < handle
             obj.CPs = CarPoint;
             
             %Sort initial Cones to add by distance to Car
-            obj.sortConesToAdd(CarPoint,CarPoint);
+            obj.sortConesToAdd(CarPoint,CarPoint,true);
             
             %Add the first Left and Right side of track cone
             LConeFirst = obj.ConesToAddL(1);
@@ -76,9 +83,11 @@ classdef PathPlanner < handle
             obj.ConesTALSorted = false;
             obj.ConesTARSorted = false;
             
-            %Re-sort by distance to recently added cone
-            obj.sortConesToAdd([LConeFirst.X;LConeFirst.Y],[RConeFirst.X;RConeFirst.Y]);
+            %Re-sort with cost function compared to recently added cone
+            obj.sortConesToAdd([LConeFirst.X;LConeFirst.Y],[RConeFirst.X;RConeFirst.Y],false);
+            %Add any suitable cones into memory
             obj.popConesToAdd()
+            %Generate CentrePoints
             obj.addPathPairs()
         end
         
@@ -88,18 +97,21 @@ classdef PathPlanner < handle
                 %Add any new cones and determine centre path
                 obj.addCones(Cones)
                 LConeLast = [obj.LCs(end).X;obj.LCs(end).Y];
-                RConeLast = [obj.RCs(end).X;obj.RCs(end).Y]; 
-                obj.sortConesToAdd(LConeLast,RConeLast);
+                RConeLast = [obj.RCs(end).X;obj.RCs(end).Y];
+                %Sort cones by cost function compared to recently added cones
+                obj.sortConesToAdd(LConeLast,RConeLast,false);
+                %Add any suitable cones into memory
                 obj.popConesToAdd()
+                %Generate CentrePoints
                 obj.addPathPoints()
             end
             
-            %If haven't set the centre points at the start needing to be reused again at end
+            %If haven't determined the centre points at the start needing to be reused again at end (finishing lap)
             %Or If haven't seen the start/finish line
             if(~obj.HaveSetFinalPoints && numel(obj.TKCs)==2)
                 deltaX = obj.TKCs(1).X-obj.TKCs(2).X;
                 deltaY = obj.TKCs(1).Y-obj.TKCs(2).Y;
-                %Cones perfectly vertical
+                %Time Keeping Cones perfectly vertical
                 if(deltaX==0)
                     %Determine the side of the x=c line car was initially on
                     compResult = (obj.CPs(1,1)<obj.TKCs(1).X);
@@ -116,7 +128,7 @@ classdef PathPlanner < handle
                     end
                 %Cones on a y=mx+c line
                 else
-                    m = (deltaY)/(deltaY);
+                    m = (deltaY)/(deltaX);
                     c = obj.TKCs(1).Y-m*obj.TKCs(1).X;
                     %Determine the side of the y=mx+c line car was initially on
                     compResult = (obj.CPs(2,1)<(m*obj.CPs(1,1)+c));
@@ -187,9 +199,12 @@ classdef PathPlanner < handle
         
         %Calculate CPs if new Cones found on either side of the track
         function addPathPoints(obj)
-            %Checking all cones not mapped yet
-            for i=obj.LC_Index:numel(obj.LCs)
-                if(~obj.LCs(i).Mapped)
+            i = obj.LC_Index;
+            j = obj.RC_Index;
+            
+            %Loop through unmapped left and right side cones
+            while ((i<=numel(obj.LCs))||(j<=numel(obj.RCs)))
+                if((i<=numel(obj.LCs))&&(~obj.LCs(i).Mapped))
                     %Find the Closest Opposite Cone and set Centre Point
                     indexOpp = obj.findClosest(obj.LCs(i),obj.RCs);
                     if (indexOpp~=-1)
@@ -200,34 +215,42 @@ classdef PathPlanner < handle
                         xMid = (xOp+xCur)/2;
                         yMid = (yOp+yCur)/2;
                         GP = [xMid;yMid];
-                        obj.LCs(i).Mapped = true;
-                        obj.LC_Index=obj.LC_Index+1;
-                        if (~((GP(1)==obj.CPs(1,size(obj.CPs,2))) && (GP(2)==obj.CPs(2,size(obj.CPs,2)))))
+                        %Check CP wasn't found last iteration (Avoids two cones pairing with each other twice)
+                        if ~((GP(1)==obj.CPs(1,size(obj.CPs,2)))&&(GP(2)==obj.CPs(2,size(obj.CPs,2))))
+                            obj.LCs(i).Mapped = true;
                             obj.CPs(:,size(obj.CPs,2)+1) = GP;
+                            %Update start of search index (Improve
+                            %efficiency and ignores cones with no suitable
+                            %partner to generate CP)
+                            obj.LC_Index = i;
                         end
                     end
-                end      
-            end
-            %Checking all cones not mapped yet
-            for i=obj.RC_Index:numel(obj.RCs)
-                if(~obj.RCs(i).Mapped)
+                end
+                i=i+1;
+                
+                if((j<=numel(obj.RCs))&&(~obj.RCs(j).Mapped))
                     %Find the Closest Opposite Cone and set Centre Point
-                    indexOpp = obj.findClosest(obj.RCs(i),obj.LCs);
+                    indexOpp = obj.findClosest(obj.RCs(j),obj.LCs);
                     if (indexOpp~=-1)
-                        xCur = obj.RCs(i).X;
-                        yCur = obj.RCs(i).Y;
+                        xCur = obj.RCs(j).X;
+                        yCur = obj.RCs(j).Y;
                         xOp = obj.LCs(indexOpp).X;
                         yOp = obj.LCs(indexOpp).Y;
                         xMid = (xOp+xCur)/2;
                         yMid = (yOp+yCur)/2;
                         GP = [xMid;yMid];
-                        obj.RCs(i).Mapped = true;
-                        obj.RC_Index=obj.RC_Index+1;
-                        if (~((GP(1)==obj.CPs(1,size(obj.CPs,2))) && (GP(2)==obj.CPs(2,size(obj.CPs,2)))))
+                        %Check CP wasn't found last iteration (Avoids two cones pairing with each other twice)
+                        if ~((GP(1)==obj.CPs(1,size(obj.CPs,2)))&&(GP(2)==obj.CPs(2,size(obj.CPs,2))))
+                            obj.RCs(j).Mapped = true;
                             obj.CPs(:,size(obj.CPs,2)+1) = GP;
+                            %Update start of search index (Improve
+                            %efficiency and ignores cones with no suitable
+                            %partner to generate CP)
+                            obj.RC_Index = j;
                         end
                     end
-                end      
+                end
+                j=j+1;
             end
         end
     
@@ -255,8 +278,8 @@ classdef PathPlanner < handle
         function index = findClosest(~,Cone,ConesOppSide)
             X = Cone.X;
             Y = Cone.Y;
-            minDist = 6; %Minimum distance cones will have
-            maxDist = 10;     %Maximum distance cones will have
+            maxGoal = 7;      %Maximum distance cones can be apart without goal point
+            maxDist = 10;       %Maximum distance cones will have (Causes exit)
             index = -1;        %-1 denotes no solution found
             %Pass through all cones on opposite side in reverse order
             for i=numel(ConesOppSide):-1:1
@@ -264,9 +287,9 @@ classdef PathPlanner < handle
                 YCone = ConesOppSide(i).Y;
                 dist = sqrt((X-XCone)^2+(Y-YCone)^2);
                 %Closer cone found
-                if dist<minDist
+                if dist<maxGoal
                     index = i;
-                    minDist = dist;
+                    maxGoal = dist;
                 %Cone too far away
                 elseif dist>maxDist
                     break;  
@@ -275,19 +298,35 @@ classdef PathPlanner < handle
         end
         
         %Function sorting cones to be added into memory to correctly order 
-        function sortConesToAdd(obj,LeftClosest,RightClosest)
+        function sortConesToAdd(obj,LeftClosest,RightClosest,sortDistOnly)
             %Sorting left sided cones
             n = numel(obj.ConesToAddL);
             %Bubble sort of ConesToAdd sorting by shortest distance
             if(n>1 && ~obj.ConesTALSorted)
                 for i=1:n-1
                     for j=1:n-i
-                        dist_j = sqrt((LeftClosest(1)-obj.ConesToAddL(j).X)^2+(LeftClosest(2)-obj.ConesToAddL(j).Y)^2);
-                        dist_j1 = sqrt((LeftClosest(1)-obj.ConesToAddL(j+1).X)^2+(LeftClosest(2)-obj.ConesToAddL(j+1).Y)^2);
-                        if dist_j>dist_j1
-                            temp = obj.ConesToAddL(j);
-                            obj.ConesToAddL(j) = obj.ConesToAddL(j+1);
-                            obj.ConesToAddL(j+1) = temp;
+                        %Sorting by distance between desired cone and cones
+                        %to be added
+                        if sortDistOnly
+                            dist_j = sqrt((LeftClosest(1)-obj.ConesToAddL(j).X)^2+(LeftClosest(2)-obj.ConesToAddL(j).Y)^2);
+                            dist_j1 = sqrt((LeftClosest(1)-obj.ConesToAddL(j+1).X)^2+(LeftClosest(2)-obj.ConesToAddL(j+1).Y)^2);
+                            if dist_j>dist_j1
+                                temp = obj.ConesToAddL(j);
+                                obj.ConesToAddL(j) = obj.ConesToAddL(j+1);
+                                obj.ConesToAddL(j+1) = temp;
+                            end
+                        %Sorting with cost function by distance between cones, angle change
+                        %and estimated track width for cones to be added
+                        else
+                            %Determine cost for two cones to be compared
+                            e_j = obj.calcCost(LeftClosest,obj.ConesToAddL(j),RightClosest);
+                            e_j1 = obj.calcCost(LeftClosest,obj.ConesToAddL(j+1),RightClosest);
+                            
+                            if (e_j>e_j1)
+                                temp = obj.ConesToAddL(j);
+                                obj.ConesToAddL(j) = obj.ConesToAddL(j+1);
+                                obj.ConesToAddL(j+1) = temp;
+                            end    
                         end
                     end
                 end
@@ -297,12 +336,28 @@ classdef PathPlanner < handle
             if(n>1 && ~obj.ConesTARSorted)
                 for i=1:n-1
                     for j=1:n-i
+                        %Sorting with cost function by distance between cones, angle change
+                        %and estimated track width for cones to be added
+                        if sortDistOnly
                         dist_j = sqrt((RightClosest(1)-obj.ConesToAddR(j).X)^2+(RightClosest(2)-obj.ConesToAddR(j).Y)^2);
                         dist_j1 = sqrt((RightClosest(1)-obj.ConesToAddR(j+1).X)^2+(RightClosest(2)-obj.ConesToAddR(j+1).Y)^2);
-                        if dist_j>dist_j1
-                            temp = obj.ConesToAddR(j);
-                            obj.ConesToAddR(j) = obj.ConesToAddR(j+1);
-                            obj.ConesToAddR(j+1) = temp;
+                            if dist_j>dist_j1
+                                temp = obj.ConesToAddR(j);
+                                obj.ConesToAddR(j) = obj.ConesToAddR(j+1);
+                                obj.ConesToAddR(j+1) = temp;
+                            end
+                        %Sorting by distance between cones, angle change
+                        %and estimated track width for cones to be added
+                        else
+                            %Determine cost for two cones to be compared
+                            e_j = obj.calcCost(RightClosest,obj.ConesToAddR(j),LeftClosest);
+                            e_j1 = obj.calcCost(RightClosest,obj.ConesToAddR(j+1),LeftClosest);
+                                                  
+                            if (e_j>e_j1)
+                                temp = obj.ConesToAddR(j);
+                                obj.ConesToAddR(j) = obj.ConesToAddR(j+1);
+                                obj.ConesToAddR(j+1) = temp;
+                            end 
                         end
                     end
                 end
@@ -316,14 +371,33 @@ classdef PathPlanner < handle
             needToAddMore=true;
             wasAdded = true;
             
+            %Loop until cones no longer being added 
             while needToAddMore && wasAdded
                 wasAdded = false;
-                nL = numel(obj.ConesToAddL);
+                
+                nL = numel(obj.ConesToAddL);              
                 nR = numel(obj.ConesToAddR);
                 
+                %Most recently added cones on Left and Right side
+                LeftLast = [obj.LCs(end).X,obj.LCs(end).Y];
+                RightLast = [obj.RCs(end).X,obj.RCs(end).Y];
+                
+                %Calculate cost of adding cone and key measures that
+                %shouldn't be exceeded
+                if nL>0
+                    [eL,dL,dOppL,angleDiffL] = obj.calcCost(LeftLast,obj.ConesToAddL(1),RightLast);
+                end
+                
+                if nR>0
+                    [eR,dR,dOppR,angleDiffR] = obj.calcCost(RightLast,obj.ConesToAddR(1),LeftLast);
+                end
+                
                 if(nL>0)
-                    LCDist = sqrt((obj.ConesToAddL(1).X-obj.LCs(end).X)^2+(obj.ConesToAddL(1).Y-obj.LCs(end).Y)^2);
-                    if LCDist<5
+                    %Left Cone must be within 5m of last, have an angle
+                    %change to track curvature less than 45deg and within 7m of last Right Cone
+                    %These parameters will likely need further optimisation
+                    if (dL<5 && (angleDiffL<(pi/4)) && dOppL<7)
+                        %If passes guards add to ordered cone list
                         obj.LCs(numel(obj.LCs)+1) = Cone(obj.ConesToAddL(1).X,obj.ConesToAddL(1).Y,'b');
                         obj.ConesToAddL(1) = [];
                         obj.ConesTALSorted = false;
@@ -332,8 +406,11 @@ classdef PathPlanner < handle
                 end
                 
                 if(nR>0)
-                    RCDist = sqrt((obj.ConesToAddR(1).X-obj.RCs(end).X)^2+(obj.ConesToAddR(1).Y-obj.RCs(end).Y)^2);
-                    if RCDist<5
+                    %Rightt Cone must be within 5m of last, have an angle
+                    %change to track curvature less than 45deg and within 7m of last Left Cone
+                    %These parameters will likely need further optimisation
+                    if (dR<5 && (angleDiffR<(pi/4)) && dOppR<7)
+                        %If passes guards add to ordered cone list
                         obj.RCs(numel(obj.RCs)+1) = Cone(obj.ConesToAddR(1).X,obj.ConesToAddR(1).Y,'y');
                         obj.ConesToAddR(1) = [];
                         obj.ConesTARSorted = false;
@@ -348,14 +425,14 @@ classdef PathPlanner < handle
                     LLC = [LastLC.X;LastLC.Y];
                     LastRC = obj.RCs(end);
                     RRC = [LastRC.X;LastRC.Y];
-                    obj.sortConesToAdd(LLC,RRC);
+                    obj.sortConesToAdd(LLC,RRC,false);
                 else
                     break;
                 end
             end
         end
         
-        %Adds CPs Points between Paired track cones (Used on first run only)
+        %Adds CPs Points between Paired track cones (Used on initialisation only)
         function addPathPairs(obj)
             %Set number of CPs generated
             n = min(numel(obj.LCs),numel(obj.RCs));
@@ -479,5 +556,68 @@ classdef PathPlanner < handle
             R = (rad_A+rad_B+rad_C)/3;  
         end
         
+        %Function to determine sorting cost of a proposed cone
+        function [e,d,dOpp,angleDiff] = calcCost(obj,PreviousCone,ConeOfInterest,OppPreviousCone)
+            %Set weightings of cost function
+            w_dist = obj.WeightDist;
+            w_ang = obj.WeightAngleDiff;
+            w_track_width = obj.WeightTrackWidth;
+            
+            %Determine candidate cone distances (Between same side and
+            %potential track width)
+            d = sqrt((PreviousCone(1)-ConeOfInterest.X)^2+(PreviousCone(2)-ConeOfInterest.Y)^2);
+            dOpp = sqrt((OppPreviousCone(1)-ConeOfInterest.X)^2+(OppPreviousCone(2)-ConeOfInterest.Y)^2);
+            
+            %Determine change in path angle - Compared to average of past cones
+            if ((numel(obj.LCs)>1)&&(numel(obj.RCs)>1))
+                %Angles from 2nd last cone to last cone in range [0,2pi]
+                anglePrevL = obj.myatan((obj.LCs(end).Y-obj.LCs(end-1).Y),(obj.LCs(end).X-obj.LCs(end-1).X));         
+                anglePrevR = obj.myatan((obj.RCs(end).Y-obj.RCs(end-1).Y),(obj.RCs(end).X-obj.RCs(end-1).X));
+                %Determine which of the two angles between is correct (Two
+                %solutions for an angle between 'anglePrevL' and 'anglePrevR'
+                if abs(anglePrevL-anglePrevR)<(2*pi-abs(anglePrevL-anglePrevR))
+                    prevDelta = abs(anglePrevL-anglePrevR);
+                    anglePrevMid = min(anglePrevL,anglePrevR)+prevDelta/2;
+                else
+                    prevDelta = 2*pi-abs(anglePrevL-anglePrevR);
+                    anglePrevMid = max(anglePrevL,anglePrevR)+prevDelta/2;
+                end
+                angleCurrent = obj.myatan((ConeOfInterest.Y-PreviousCone(2)),(ConeOfInterest.X-PreviousCone(1)));
+                angleDiff = min(abs(angleCurrent-anglePrevMid),2*pi-abs(angleCurrent-anglePrevMid));
+                %Normalise change in angle back to [0,2pi]
+                angleDiff = atan(tan(angleDiff));
+            else
+                angleDiff = 0;
+            end
+            
+            %Calculate cost value
+            e = w_dist*(d^2)+w_ang*(angleDiff^2)+w_track_width*(dOpp^2);     
+        end
+        
+        %Function to calculate arctan in range [0,2pi]
+        function v = myatan(~,y,x)
+            if nargin==1 %just in case the user only gives the value of y myatan(y)
+                x=1;
+            end
+            v=nan;
+            if x>0
+                v=atan(y/x);
+            end
+            if y>=0 && x<0
+                v=pi+atan(y/x);
+            end
+            if y<0 && x<0
+                v=-pi+atan(y/x);
+            end
+            if y>0 && x==0
+                v=pi/2;
+            end
+            if y<0 && x==0
+                v=-pi/2;
+            end
+            if v<0
+                v=v+2*pi;
+            end
+        end
     end
 end

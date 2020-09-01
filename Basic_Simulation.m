@@ -58,11 +58,14 @@ slam = SLAM(cone_n_val,car_n_val,R,T,VelBased);
 slam.update(world.LCs,world.RCs,world.TKCs,world.Car);
 
 %Create Path Planner
-setConstantVelocity = false;
+setConstantVelocity = true;
 VMax = 10;
 VConst = 5;
 FGain = 3;
-pp = PathPlanner(slam.Cones_N,slam.Car_N,setConstantVelocity,VMax,VConst,FGain);
+WeightDist = 0.3;
+WeightAngle = 0.6;
+WeightTrackWidth = 0.1;
+pp = PathPlanner(slam.Cones_N,slam.Car_N,setConstantVelocity,VMax,VConst,FGain,WeightDist,WeightAngle,WeightTrackWidth);
 
 %Create Controller [Kdd = 1]
 minLd = 3;
@@ -73,6 +76,7 @@ numGoal = 0;
 numLeft = 0;
 numRight = 0;
 numPoints = 0;
+numSlamCones = 0;
 
 tPP = 0;
 tControl = 0;
@@ -102,11 +106,14 @@ while true
         numGoalPrev = numGoal;
         numLeftPrev = numLeft;
         numRightPrev = numRight;
+        numSlamPrev = numSlamCones;
         numPoints = numel(world.Car.X);
         numGoal = size(pp.CPs,2);
         numLeft = numel(pp.LCs);
         numRight = numel(pp.RCs);
+        numSlamCones = numel(slam.Cones_N);
         figure(1)
+        plot([slam.Cones_N(numSlamPrev+1:numSlamCones).X],[slam.Cones_N(numSlamPrev+1:numSlamCones).Y],'rx')
         plot([pp.LCs(numLeftPrev+1:numLeft).X],[pp.LCs(numLeftPrev+1:numLeft).Y],'kx')
         plot([pp.RCs(numRightPrev+1:numRight).X],[pp.RCs(numRightPrev+1:numRight).Y],'kx')
         plot(pp.CPs(1,numGoalPrev+1:numGoal),pp.CPs(2,numGoalPrev+1:numGoal),'go')

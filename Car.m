@@ -49,7 +49,7 @@ classdef Car < handle
             obj.Theta = Theta;
         end
         
-        %Set Current State of Car
+        %Set Current State of Car (Useful for adding noise to measurements)
         function setState(obj,Car)
             obj.k = Car.k;
             i = obj.k;
@@ -72,7 +72,7 @@ classdef Car < handle
             obj.t = Car.t;
         end
         
-        %Physics of the Car (Dynamic Model - Linear Friction)
+        %Physics of the Car (Dynamic Model - Linear Friction + Saturation)
         %Uses 2nd Order Taylor Series if Possible -> Otherwise 1st Order
         function update(obj,T,a,DDot)
             obj.k = obj.k + 1;
