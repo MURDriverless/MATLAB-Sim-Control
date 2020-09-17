@@ -8,6 +8,7 @@ classdef Cone < handle
       YAvg            %Average Y Position (Measured multiple times)
       numSeen = 0;    %Amount of Times Scanned by SLAM
       Mapped = false; %Mapped Geometrically by PathPlanner (Used to set GP)
+      slamIndex       %Corresponding index of cone in message from SLAM
       Seen = false;   %Seen and Recorded at least once by SLAM - Speeds up SLAM emulation
       
    end

@@ -50,40 +50,36 @@ ylabel("Y(m)")
 title("FSG - Driverless Track")
 
 %Create SLAM
-cone_n_val = 0;                  %Set 'range' or 'stddev' for cone noise
-car_n_val = [0,0,0,0,0,0,0,0,0]; %Set 'range' or 'stddev' for car state noise
+cone_n_val = 1;                  %Set 'stddev' for cone noise
+car_n_val = [0,0,0,0,0,0,0,0,0]; %Set 'stddev' for car state noise
 R = 10;                          %Set radius of SLAM perception
 VelBased = false;                %Set VelocityBased StdDev
 slam = SLAM(cone_n_val,car_n_val,R,T,VelBased);
 slam.update(world.LCs,world.RCs,world.TKCs,world.Car);
 
 %Create Path Planner
-setConstantVelocity = true;
-VMax = 10;
-VConst = 5;
-FGain = 3;
-WeightDist = 0.3;
-WeightAngle = 0.6;
-WeightTrackWidth = 0.1;
+setConstantVelocity = true;     %Set Constant Velocity reference
+VMax = 10;                       %Maximum speed in Velocity Reference
+VConst = 5;                      %Constant speed in Velocity Reference 
+FGain = 3;                       %V_Max = FGain*sqrt(R) - Simplification of Dynamic Bicycle Model
+                                 %Sets a conservative maximum cornering force
+WeightDist = 0.3;                %Weighting on sorting by proposed distance between cones
+WeightAngle = 0.6;               %Weighting on sorting by proposed change in track curvature
+WeightTrackWidth = 0.1;          %Weighting on sorting by proposed change in track width
 pp = PathPlanner(slam.Cones_N,slam.Car_N,setConstantVelocity,VMax,VConst,FGain,WeightDist,WeightAngle,WeightTrackWidth);
 
 %Create Controller [Kdd = 1]
-minLd = 3;
-maxLd = 10;
-Kdd = 0.3;
+minLd = 3;                       %Minimum lookahead distance (Approx length of car)
+maxLd = 10;                      %Maximum lookahead distance (SLAM range)
+Kdd = 0.3;                       %Gain to set lookahead L = Kdd*V
 controller = Controller(Kdd,T,minLd,maxLd,FGain);
-numGoal = 0;
-numLeft = 0;
-numRight = 0;
-numPoints = 0;
-numSlamCones = 0;
 
 tPP = 0;
 tControl = 0;
 tSLAM = 0;
 tWorld = 0;
 tPlot = 0;
-
+unplot('set')
 counter = 0;
 fprintf("STARTING\n")
 while true
@@ -98,26 +94,20 @@ while true
     if rem(counter,20)==0
         tic
         [X,Y,V] = pp.update(slam.Cones_N,slam.Car_N);
+        fprintf("TOC:%f\n",toc);
         tPP = tPP + toc;
     end
     if rem(counter,150)==0
         tic
-        numPointsPrev = numPoints;
-        numGoalPrev = numGoal;
-        numLeftPrev = numLeft;
-        numRightPrev = numRight;
-        numSlamPrev = numSlamCones;
-        numPoints = numel(world.Car.X);
-        numGoal = size(pp.CPs,2);
-        numLeft = numel(pp.LCs);
-        numRight = numel(pp.RCs);
-        numSlamCones = numel(slam.Cones_N);
         figure(1)
-        plot([slam.Cones_N(numSlamPrev+1:numSlamCones).X],[slam.Cones_N(numSlamPrev+1:numSlamCones).Y],'rx')
-        plot([pp.LCs(numLeftPrev+1:numLeft).X],[pp.LCs(numLeftPrev+1:numLeft).Y],'kx')
-        plot([pp.RCs(numRightPrev+1:numRight).X],[pp.RCs(numRightPrev+1:numRight).Y],'kx')
-        plot(pp.CPs(1,numGoalPrev+1:numGoal),pp.CPs(2,numGoalPrev+1:numGoal),'go')
-        plot(world.Car.X(numPointsPrev+1:numPoints),world.Car.Y(numPointsPrev+1:numPoints),'b-')
+        unplot('revert')
+        unplot('set')
+        plot([slam.Cones_N(:).X],[slam.Cones_N(:).Y],'rx')
+        plot([pp.LCs(:).X],[pp.LCs(:).Y],'kx')
+        plot([pp.RCs(:).X],[pp.RCs(:).Y],'kx')
+        plot(world.Car.X,world.Car.Y,'b-')
+        plot([pp.CPs(:).X],[pp.CPs(:).Y],'go')
+        plot([pp.CPs(:).X],[pp.CPs(:).Y],'g-')
         tPlot = tPlot + toc;
     end
     tic
@@ -194,4 +184,39 @@ end
 e_ref_c_normalised = e_ref_centre/numel(world.t);
 fprintf("Calculated Reference Error (Centre of Track) Normalised: %f - Unnormalised: %f\n",e_ref_c_normalised,e_ref_centre);
         
+function unplot(arg)
+%UNPLOT Delete the most recently created graphics object(s).
+%
+%   UNPLOT removes the most recently created line, surface, patch, or
+%   text object created in the current axes. 
+%
+%   UNPLOT(N) removes the N most recent. 
+%
+%   UNPLOT SET takes a snapshot of the objects currently in the axes. 
+%   UNPLOT REVERT removes any objects drawn since the last SET.
+%
+%   Note: UNPLOT does not affect objects added through the figure menus
+%   and buttons. 
+% Copyright 2002-2003 by Toby Driscoll (driscoll@na-net.ornl.gov).
+% 17 Mar 2003: Thanks to Norbert Marwan (marwan@agnld.uni-potsdam.de) for
+%    the check on length(c).
+    persistent saved
+
+    if nargin < 1
+        arg = 1;
+    end
+
+    c = get(gca,'children');
+    switch lower(arg)
+        case 'set'
+            saved = c;
+        case 'revert'
+            delete( setdiff(c,saved) )
+        otherwise
+            if ~ischar(arg)
+                % 2003-03-17 modified by Norbert Marwan (marwan@agnld.uni-potsdam.de)
+                delete( c(1:min(arg,length(c))) )
+            end
+    end
+end
 
